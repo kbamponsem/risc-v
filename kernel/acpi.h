@@ -85,9 +85,9 @@ struct mem_affinity_list
 
 struct machine
 {
-    struct cpu_desc *all_cpus;
-    struct memrange *all_memranges;
-    struct domain *all_domains;
+    struct cpu_desc **all_cpus;
+    struct memrange **all_memranges;
+    struct domain **all_domains;
 };
 struct cpu_desc
 {
