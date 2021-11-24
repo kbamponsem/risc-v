@@ -9,9 +9,10 @@
 #define max(a, b) ((a > b ? a : b))
 
 #define create_domain_lapic(dom, lapic) ((dom << 28) | lapic)
-#define get_domain(domain_lapic) (domain_lapic >> 28)
-#define get_lapic(domain_lapic) ((uint8)domain_lapic)
+#define get_domain_id(domain_lapic) (domain_lapic >> 28)
+#define get_lapic_id(domain_lapic) ((uint8)domain_lapic)
 
+struct machine *machine;
 struct domain *domains;
 struct cpu_desc *mycpus;
 struct memrange *memranges;
@@ -40,6 +41,20 @@ uint64 *get_memrange_range(uint32 lo_base, uint32 lo_length, uint32 hi_base, uin
     range[1] = (uint64)(range[0] + lo_length);
 
     return range;
+}
+struct domain *get_domain_by_id(uint32 domain_id)
+{
+    struct domain *domain = &machine->all_domains[0];
+
+    while (domain != NULL)
+    {
+        if (domain->domain_id == domain_id)
+        {
+            return domain;
+        }
+        domain = domain->next_domain;
+    }
+    return NULL;
 }
 
 int count_cpus(struct machine *machine)
@@ -73,17 +88,43 @@ void describe_cpu_in_domain(struct cpu_desc *cpu_desc, uint32 domain_id)
 {
     while (cpu_desc != NULL)
     {
-        if (get_domain((uint64)cpu_desc->domain) == domain_id)
+        if (get_domain_id((uint64)cpu_desc->domain) == domain_id)
         {
-            printf("\n");
-            printf("\tBelongs to: Domain %d\n", get_domain((uint64)cpu_desc->domain));
+            printf("---[CPU]---\n");
+            printf("\tBelongs to: Domain %d\n", get_domain_id((uint64)cpu_desc->domain));
             printf("\tAPIC ID: %d\n", cpu_desc->lapic);
             printf("\tNext CPU: %p\n", cpu_desc->next_cpu_desc);
-            printf("\n");
         }
 
         cpu_desc = cpu_desc->next_cpu_desc;
     }
+    printf("\n");
+}
+
+void describe_memrange_by_domain_id(uint32 domain_id)
+{
+    uint64 *start = NULL;
+    uint64 *end = NULL;
+    int start_set = 0;
+    for (int i = 0; i < SRAT_PHYS_SIZE; i++)
+    {
+        if (memranges[i].start != (uint64 *)-1)
+        {
+            if (domain_id == get_domain_id(memranges[i].domain_id))
+            {
+                if (!start_set)
+                {
+                    start = memranges[i].start;
+                    start_set = 1;
+                }
+                end = (memranges[i].end);
+
+                memranges[i].domain = get_domain_by_id(domain_id);
+            }
+        }
+    }
+
+    printf("\tMemrange: [%p ~ %p]\n", start, end);
 }
 void describe_domains(struct machine *machine)
 {
@@ -94,8 +135,8 @@ void describe_domains(struct machine *machine)
         printf("\n --- DOMAIN --- \n");
         printf("Domain id: %d\n", domain->domain_id);
         describe_cpu_in_domain(domain->cpus, domain->domain_id);
-        printf("Next Domain: %p\n", domain->next_domain);
-
+        describe_memrange_by_domain_id(domain->domain_id);
+        printf("\tNext Domain: %p\n", domain->next_domain);
         domain = domain->next_domain;
         printf("\n --- [END DOMAIN] ---\n");
     }
@@ -104,7 +145,6 @@ void describe_machine(struct machine *machine)
 {
     printf("---Machine---\n");
     printf("CPUS: %d\n", count_cpus(machine));
-
     printf("DOMAINS: %d\n", count_domains(machine));
     describe_domains(machine);
 }
@@ -117,7 +157,7 @@ struct cpu_desc *get_cpus(uint32 domain_id)
     int i = 0;
     while (cpu_desc != NULL)
     {
-        if (get_domain((uint64)cpu_desc->domain) == domain_id)
+        if (get_domain_id((uint64)cpu_desc->domain) == domain_id)
         {
             domain_cpus[i] = *cpu_desc;
             i += 1;
@@ -155,14 +195,16 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
             {
                 domains[i].domain_id = MAX_UINT32;
                 memranges[i].domain_id = MAX_UINT32;
-                memranges[i].start = 0;
+                memranges[i].start = (uint64)0;
                 domains[i].domain_id = mem_aff_list[i]->domain;
-                domains[i].cpus = NULL;
-                domains[i].freepages = NULL;
-                domains[i].next_domain = NULL;
-                mycpus[i].next_cpu_desc = NULL;
                 domain_size = max(domain_size, mem_aff_list[i]->domain);
             }
+            domains[i].cpus = NULL;
+            domains[i].freepages = NULL;
+            domains[i].next_domain = NULL;
+            mycpus[i].next_cpu_desc = NULL;
+            memranges[i].start = (void *)-1;
+            memranges[i].domain = NULL;
         }
 
         for (int i = 0; i < SRAT_PHYS_SIZE; i++)
@@ -173,12 +215,12 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
                 uint32 domain_lapic = create_domain_lapic(mem_aff_list[i]->domain, lapic_list[i]->APIC_ID);
                 // domain_lapic |= lapic_list[i]->APIC_ID;
                 printf("((%x), [%p ~ %p])\n", domain_lapic, range[0], range[1]);
-                printf("Domain: %d\tLAPIC: %d\n", get_domain(domain_lapic), get_lapic(domain_lapic));
+                printf("Domain: %d\tLAPIC: %d\n", get_domain_id(domain_lapic), get_lapic_id(domain_lapic));
 
                 memranges[i].domain_id = domain_lapic;
-                memranges[i].domain = (struct domain *)(uint64)get_domain(memranges[i].domain_id);
-                memranges[i].start = range[0];
-                memranges[i].length = range[1] - range[0];
+                memranges[i].domain = (struct domain *)(uint64)get_domain_id(domain_lapic);
+                memranges[i].start = (uint64 *)range[0];
+                memranges[i].end = (uint64 *)range[1];
 
                 mycpus[i].lapic = lapic_list[i]->APIC_ID;
                 if (mem_aff_list[i + 1] == NULL)
@@ -204,14 +246,24 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
                 domains[i].next_domain = &domains[i + 1];
             domains[i].cpus = get_cpus(i);
         }
+
         printf("%p\n", memranges);
         printf("Domain size: %d\n", domain_size);
         printf("%p\n", PHYSTOP);
 
-        struct machine *machine = kalloc();
+        machine = kalloc();
         machine->all_cpus = mycpus;
         machine->all_domains = domains;
         machine->all_memranges = memranges;
+
+        for (int i = 0; i < SRAT_PHYS_SIZE; i++)
+        {
+            if (memranges[i].start != (void *)-1)
+            {
+                printf("Start: %p\n", memranges[i].start);
+                memranges[i].domain = get_domain_by_id(memranges[i].domain_id);
+            }
+        }
 
         describe_machine(machine);
     }
@@ -285,9 +337,11 @@ void createdomains(void)
         0, 0, 0, 0, 128, 1, 0, 0, 0, 0,
         0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0
+        0, 0, 0};
 
-    };
+    // uint8 srat_table[] = {
+
+    // };
 
     struct SRAT *srat = (struct SRAT *)kalloc();
 

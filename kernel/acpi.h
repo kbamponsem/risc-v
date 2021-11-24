@@ -92,9 +92,9 @@ struct cpu_desc
 struct memrange
 {
     uint32 domain_id;
-    struct domain* domain;
-    uint64 start; /*virtual address*/
-    size_t length;
+    struct domain *domain;
+    uint64 *start; /*virtual address*/
+    uint64 *end;
 };
 
 struct domain
