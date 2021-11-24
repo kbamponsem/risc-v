@@ -63,8 +63,6 @@ int count_cpus(struct machine *machine)
     int count = 0;
     while (mycpu != NULL)
     {
-        printf("%x\n", mycpu->domain);
-        printf("%d\n", mycpu->lapic);
         count++;
         mycpu = mycpu->next_cpu_desc;
     }
@@ -77,7 +75,6 @@ int count_domains(struct machine *machine)
 
     while (domain != NULL)
     {
-        printf("%p\n", domain);
         count++;
         domain = domain->next_domain;
     }
@@ -167,7 +164,7 @@ struct cpu_desc *get_cpus(uint32 domain_id)
     return domain_cpus;
 }
 
-void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SRAT_mem_struct **mem_aff_list)
+void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, int lapic_pos, struct SRAT_mem_struct **mem_aff_list, int mem_aff_pos)
 {
     // First check size of all the necessary structures
     size_t total_size = (sizeof(struct machine) + sizeof(struct domain) +
@@ -204,6 +201,7 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
             domains[i].next_domain = NULL;
             mycpus[i].next_cpu_desc = NULL;
             memranges[i].start = (void *)-1;
+            memranges[i].end = (void *)-1;
             memranges[i].domain = NULL;
         }
 
@@ -213,17 +211,17 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
             {
                 uint64 *range = get_memrange_range(mem_aff_list[i]->lo_base, mem_aff_list[i]->lo_length, mem_aff_list[i]->hi_base, mem_aff_list[i]->hi_length);
                 uint32 domain_lapic = create_domain_lapic(mem_aff_list[i]->domain, lapic_list[i]->APIC_ID);
-                // domain_lapic |= lapic_list[i]->APIC_ID;
-                printf("((%x), [%p ~ %p])\n", domain_lapic, range[0], range[1]);
-                printf("Domain: %d\tLAPIC: %d\n", get_domain_id(domain_lapic), get_lapic_id(domain_lapic));
 
                 memranges[i].domain_id = domain_lapic;
                 memranges[i].domain = (struct domain *)(uint64)get_domain_id(domain_lapic);
                 memranges[i].start = (uint64 *)range[0];
                 memranges[i].end = (uint64 *)range[1];
+            }
 
+            if (lapic_list[i])
+            {
                 mycpus[i].lapic = lapic_list[i]->APIC_ID;
-                if (mem_aff_list[i + 1] == NULL)
+                if (lapic_list[i + 1] == NULL)
                 {
                     mycpus[i].next_cpu_desc = NULL;
                 }
@@ -231,7 +229,7 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
                 {
                     mycpus[i].next_cpu_desc = &mycpus[i + 1];
                 }
-                mycpus[i].domain = (struct domain *)(uint64)(domain_lapic);
+                mycpus[i].domain = (struct domain *)(uint64)(create_domain_lapic(lapic_list[i]->lo_DM, lapic_list[i]->APIC_ID));
             }
         }
 
@@ -247,10 +245,6 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
             domains[i].cpus = get_cpus(i);
         }
 
-        printf("%p\n", memranges);
-        printf("Domain size: %d\n", domain_size);
-        printf("%p\n", PHYSTOP);
-
         machine = kalloc();
         machine->all_cpus = mycpus;
         machine->all_domains = domains;
@@ -260,7 +254,6 @@ void initial_numa_topology(struct SRAT_proc_lapic_struct **lapic_list, struct SR
         {
             if (memranges[i].start != (void *)-1)
             {
-                printf("Start: %p\n", memranges[i].start);
                 memranges[i].domain = get_domain_by_id(memranges[i].domain_id);
             }
         }
@@ -297,9 +290,51 @@ int verify_srat(struct RSDT *srat)
 }
 void createdomains(void)
 {
+    // uint8 srat_table[] = {
+    //     83,
+    //     82, 65, 84, 128, 1, 0, 0, 1, 141, 66,
+    //     79, 67, 72, 83, 32, 66, 88, 80, 67, 32,
+    //     32, 32, 32, 1, 0, 0, 0, 66, 88, 80,
+    //     67, 1, 0, 0, 0, 1, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 0, 0, 0, 0, 16, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 16, 0, 1, 1, 0, 0,
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     16, 1, 2, 1, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 0, 0, 16, 1, 3, 1,
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 16, 2, 4, 1, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 0, 0, 0, 0, 16, 3,
+    //     5, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 10, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 16, 0, 0, 0, 0, 0, 0,
+    //     0, 240, 127, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 1, 40, 1, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 128, 0, 0, 0, 0, 0,
+    //     0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 1, 40, 1, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+    //     0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 1, 40, 2, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 64, 1, 0, 0, 0, 0,
+    //     0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0, 1, 40, 3, 0, 0, 0, 0,
+    //     0, 0, 0, 0, 128, 1, 0, 0, 0, 0,
+    //     0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    //     0, 0, 0};
+
     uint8 srat_table[] = {
         83,
-        82, 65, 84, 128, 1, 0, 0, 1, 141, 66,
+        82, 65, 84, 48, 1, 0, 0, 1, 62, 66,
         79, 67, 72, 83, 32, 66, 88, 80, 67, 32,
         32, 32, 32, 1, 0, 0, 0, 66, 88, 80,
         67, 1, 0, 0, 0, 1, 0, 0, 0, 0,
@@ -307,11 +342,11 @@ void createdomains(void)
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 16, 0, 1, 1, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        16, 1, 2, 1, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 16, 1, 3, 1,
+        16, 0, 2, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 16, 0, 3, 1,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 16, 2, 4, 1, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 16, 3,
+        0, 0, 16, 0, 4, 1, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 16, 1,
         5, 1, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -319,29 +354,17 @@ void createdomains(void)
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
         0, 0, 0, 16, 0, 0, 0, 0, 0, 0,
-        0, 240, 127, 0, 0, 0, 0, 0, 0, 0,
+        0, 240, 191, 0, 0, 0, 0, 0, 0, 0,
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 1, 0, 0, 0, 0,
-        0, 0, 0, 0, 128, 0, 0, 0, 0, 0,
-        0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 1, 0, 0, 0, 0,
+        0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
-        0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 192, 0, 0, 0, 0, 0, 0, 0,
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 2, 0, 0, 0, 0,
-        0, 0, 0, 0, 64, 1, 0, 0, 0, 0,
-        0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 3, 0, 0, 0, 0,
-        0, 0, 0, 0, 128, 1, 0, 0, 0, 0,
-        0, 0, 64, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 1, 40, 1, 0, 0, 0, 0,
+        0, 0, 0, 0, 192, 1, 0, 0, 0, 0,
+        0, 0, 128, 0, 0, 0, 0, 0, 0, 0,
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0};
-
-    // uint8 srat_table[] = {
-
-    // };
 
     struct SRAT *srat = (struct SRAT *)kalloc();
 
@@ -366,7 +389,6 @@ void createdomains(void)
             if (value == 0x0)
             {
                 struct SRAT_proc_lapic_struct *lapic = (struct SRAT_proc_lapic_struct *)(addr);
-
                 lapic_list[lapic_pos] = lapic;
                 lapic_pos += 1;
 
@@ -376,8 +398,11 @@ void createdomains(void)
             {
                 struct SRAT_mem_struct *mem = (struct SRAT_mem_struct *)(addr);
 
-                mem_aff_list[mem_aff_pos] = mem;
-                mem_aff_pos += 1;
+                if (mem->flags)
+                {
+                    mem_aff_list[mem_aff_pos] = mem;
+                    mem_aff_pos += 1;
+                }
 
                 addr = (uint64 *)((uint8 *)addr + sizeof(struct SRAT_mem_struct));
             }
@@ -387,6 +412,8 @@ void createdomains(void)
                 addr = (uint64 *)((uint8 *)addr + sizeof(struct SRAT_proc_lapic2_struct));
             }
         }
-        initial_numa_topology(lapic_list, mem_aff_list);
+
+        printf("[%d, %d]\n", lapic_pos, mem_aff_pos);
+        initial_numa_topology(lapic_list, lapic_pos, mem_aff_list, mem_aff_pos);
     }
 }
