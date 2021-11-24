@@ -7,6 +7,8 @@
 #define CPU_CONFIG 0
 #define MEM_CONFIG 1
 
+#define MAX_UINT32 (2 * 800000000UL)
+
 typedef unsigned long size_t;
 struct RSDT
 {
@@ -75,19 +77,11 @@ struct SRAT_mem_struct
     uint8 reserved3[8]; // Reserved
 } __attribute__((packed));
 
-struct lapic_list
-{
-};
-
-struct mem_affinity_list
-{
-};
-
 struct machine
 {
-    struct cpu_desc **all_cpus;
-    struct memrange **all_memranges;
-    struct domain **all_domains;
+    struct cpu_desc *all_cpus;
+    struct memrange *all_memranges;
+    struct domain *all_domains;
 };
 struct cpu_desc
 {
@@ -97,15 +91,16 @@ struct cpu_desc
 };
 struct memrange
 {
-    uint8 *start; /*virtual address*/
+    uint32 domain_id;
+    struct domain* domain;
+    uint64 start; /*virtual address*/
     size_t length;
-    struct domain *domain;
 };
 
 struct domain
 {
+    uint32 domain_id;
     struct domain *next_domain;
-    struct memrange *memranges;
     struct cpu_desc *cpus;
     struct page_t *freepages;
 };
