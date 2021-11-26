@@ -85,16 +85,17 @@ struct machine
 };
 struct cpu_desc
 {
+    uint32 domain_id;
     struct cpu_desc *next_cpu_desc;
     struct domain *domain;
-    int lapic;
+    uint8 lapic;
 };
 struct memrange
 {
     uint32 domain_id;
     struct domain *domain;
-    uint64 *start; /*virtual address*/
-    uint64 *end;
+    uint8 *start; /*virtual address*/
+    uint8 *end;
 };
 
 struct domain
@@ -103,4 +104,10 @@ struct domain
     struct domain *next_domain;
     struct cpu_desc *cpus;
     struct page_t *freepages;
+};
+
+struct topology_allocator
+{
+    uint8 *cur;
+    uint8 *max;
 };
