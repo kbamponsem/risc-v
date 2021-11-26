@@ -19,7 +19,7 @@ void main()
     kinit();            // physical page allocator
     kvminit();          // create kernel page table
 
-    createdomains(); // create domains from a sample x86 SRAT table.
+    extracttopology(); // create domains from a sample x86 SRAT table.
 
     kvminithart();      // turn on paging
 

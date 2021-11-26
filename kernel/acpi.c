@@ -289,7 +289,7 @@ void initial_cpu_doms()
         cpu_desc = cpu_desc->next_cpu_desc;
     }
 }
-void createdomains(void)
+void extracttopology(void)
 {
     tinit();
 
@@ -343,8 +343,6 @@ void createdomains(void)
         // Grab the first address after the header.
         uint64 *addr = (uint64 *)((uint8 *)srat + sizeof(*srat));
         uint64 *srat_end = (uint64 *)((uint8 *)srat + srat->length);
-
-        // int lapic_pos = 0, mem_aff_pos = 0;
 
         while (addr < srat_end)
         {

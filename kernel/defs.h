@@ -183,7 +183,7 @@ void virtio_disk_rw(struct buf *, int);
 void virtio_disk_intr(void);
 
 // acpi.c
-void createdomains(void);
+void extracttopology(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
