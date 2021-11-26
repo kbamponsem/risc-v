@@ -30,7 +30,6 @@ void *talloc(size_t size)
 {
     if (t_mem->cur + size > t_mem->max)
     {
-        printf("Max exceeded!\n");
         t_mem->cur = kalloc();
         t_mem->max = t_mem->cur + PGSIZE;
     }
@@ -38,15 +37,6 @@ void *talloc(size_t size)
     void *res = t_mem->cur;
     t_mem->cur = (t_mem->cur + size);
     return res;
-}
-
-void check_relations(void *start, size_t pt_size, size_t size)
-{
-    while (start != NULL)
-    {
-        printf("%p -> %p\n", start, (start + size));
-        start = (start + size);
-    }
 }
 
 uint64 *get_memrange_range(uint32 lo_base, uint32 lo_length, uint32 hi_base, uint32 hi_length)
@@ -105,28 +95,12 @@ int count_domains(struct machine *machine)
     return count;
 }
 
-void describe_cpu_in_domain(struct cpu_desc *cpu_desc, uint32 domain_id)
-{
-    while (cpu_desc != NULL)
-    {
-        if (get_domain_id((uint64)cpu_desc->domain) == domain_id)
-        {
-            printf("---[CPU]---\n");
-            printf("\tBelongs to: Domain %d\n", get_domain_id((uint64)cpu_desc->domain));
-            printf("\tAPIC ID: %d\n", cpu_desc->lapic);
-            printf("\tNext CPU: %p\n", cpu_desc->next_cpu_desc);
-        }
-
-        cpu_desc = cpu_desc->next_cpu_desc;
-    }
-}
-
 void describe_cpus(struct cpu_desc *cpu_desc)
 {
     printf("[");
     while (cpu_desc != NULL)
     {
-        printf("CPU %d, ", cpu_desc->lapic);
+        printf("CPU%d ", cpu_desc->lapic);
         cpu_desc = cpu_desc->next_cpu_desc;
     }
     printf("]\n");
@@ -141,7 +115,7 @@ void describe_domains(struct domain *domain)
         printf("[ ");
         while (cpus_in_domain != NULL)
         {
-            printf("CPU%d, ", cpus_in_domain->lapic);
+            printf("CPU%d ", cpus_in_domain->lapic);
             cpus_in_domain = cpus_in_domain->next_cpu_desc;
         }
         printf("]\n");
@@ -166,6 +140,8 @@ void copy_cpu_desc(struct cpu_desc **dest, struct cpu_desc *src)
     (*dest)->domain_id = src->domain_id;
     (*dest)->domain = src->domain;
     (*dest)->next_cpu_desc = NULL;
+
+    // if ((*dest)->next_cpu_desc != NULL)
 }
 
 struct cpu_desc *get_cpus(uint32 domain_id)
@@ -177,7 +153,6 @@ struct cpu_desc *get_cpus(uint32 domain_id)
     {
         if (cpu_desc->domain_id == domain_id)
         {
-
             if (domain_cpus == NULL)
             {
                 // Do a shallow copy because we are using pointers.
@@ -190,9 +165,10 @@ struct cpu_desc *get_cpus(uint32 domain_id)
                 {
                     if (_dom->next_cpu_desc == NULL)
                         break;
+
+                    _dom = _dom->next_cpu_desc;
                 }
                 copy_cpu_desc(&_dom->next_cpu_desc, cpu_desc);
-                _dom->next_cpu_desc->next_cpu_desc = NULL;
             }
         }
 
@@ -298,7 +274,6 @@ void initial_domain_cpus()
     while (dom != NULL)
     {
         dom->cpus = get_cpus(dom->domain_id);
-        printf("dom->cpus: %p\n", dom->cpus);
         dom = dom->next_domain;
     }
 }
@@ -362,9 +337,6 @@ void createdomains(void)
 
     memmove(srat, srat_table, sizeof(srat_table));
 
-    // struct SRAT_mem_struct *mem_aff_list[SRAT_PHYS_SIZE];
-    // struct SRAT_proc_lapic_struct *lapic_list[SRAT_PHYS_SIZE];
-
     // do a checksum.
     if (verify_srat((struct RSDT *)srat))
     {
@@ -381,7 +353,6 @@ void createdomains(void)
             if (value == 0x0)
             {
                 struct SRAT_proc_lapic_struct *lapic = (struct SRAT_proc_lapic_struct *)(addr);
-                printf("%p\n", machine->all_cpus);
 
                 create_cpu_desc_by_apic_id(lapic->APIC_ID, lapic->lo_DM);
 
@@ -390,7 +361,6 @@ void createdomains(void)
             else if (value == 0x1)
             {
                 struct SRAT_mem_struct *mem = (struct SRAT_mem_struct *)(addr);
-
                 create_domain_by_id(mem->domain);
 
                 addr = (uint64 *)((uint8 *)addr + sizeof(struct SRAT_mem_struct));
