@@ -6,6 +6,8 @@
 
 #define NULL ((void *)0)
 
+#define BYTE (sizeof(uint8))
+
 #define max(a, b) ((a > b ? a : b))
 
 #define create_domain_lapic(dom, lapic) ((dom << 28) | lapic)
@@ -18,6 +20,19 @@ struct machine *machine;
 struct domain *domains;
 struct cpu_desc *mycpus;
 struct memrange *memranges;
+
+void *mymemcpy(void *dest, void *src, size_t size)
+{
+    char *a = (char *)dest;
+    char *b = (char *)src;
+
+    for (int i = 0; i < size; i++)
+    {
+        a[i] = b[i];
+        printf("%x, (%p, %x)\n", a[i], &b[i], b[i]);
+    }
+    return dest;
+}
 
 void tinit()
 {
@@ -38,22 +53,31 @@ void *talloc(size_t size)
     t_mem->cur = (t_mem->cur + size);
     return res;
 }
-
-uint64 *get_memrange_range(uint32 lo_base, uint32 lo_length, uint32 hi_base, uint32 hi_length)
+void copy_memrange(struct memrange **dest, struct memrange *src)
 {
-    uint64 *range = kalloc();
+    (*dest) = (struct memrange *)talloc(sizeof(*(*dest)));
+    (*dest)->domain_id = src->domain_id;
+    (*dest)->domain = src->domain;
+    (*dest)->start = src->start;
+    (*dest)->length = src->length;
+    (*dest)->next_memrange = NULL;
+}
 
-    if (hi_base)
-    {
-        range[0] = ((uint64)hi_base << 32) + lo_base;
-    }
-    else
-    {
-        range[0] = (uint64)(lo_base);
-    }
-    range[1] = (uint64)(range[0] + lo_length);
+struct memrange *get_domain_memrange(uint32 domain_id)
+{
+    struct memrange *results = (struct memrange *)talloc(sizeof(*results));
+    results->next_memrange = NULL;
 
-    return range;
+    struct memrange *range = machine->all_memranges;
+    while (range != NULL)
+    {
+        if (range->domain_id == domain_id)
+        {
+            printf("%p\n", range);
+        }
+        range = range->next_memrange;
+    }
+    return results;
 }
 
 struct domain *get_domain_by_id(uint32 domain_id)
@@ -127,7 +151,7 @@ void describe_domains(struct domain *domain)
 void describe_machine(struct machine *machine)
 {
     printf("---Machine---\n");
-    printf("CPUS: %d\n", count_cpus(machine));
+    // printf("CPUS: %d\n", count_cpus(machine));
     describe_cpus(machine->all_cpus);
     printf("DOMAINS: %d\n", count_domains(machine));
     describe_domains(machine->all_domains);
@@ -238,7 +262,7 @@ void create_domain_by_id(uint32 dom_id)
     }
 }
 
-void create_cpu_desc_by_apic_id(uint8 apic_id, uint8 domain)
+void create_cpu_desc_by_apic_id(uint8 apic_id, uint32 domain)
 {
     struct cpu_desc *descriptor = (struct cpu_desc *)talloc(sizeof(*descriptor));
 
@@ -267,7 +291,7 @@ void create_cpu_desc_by_apic_id(uint8 apic_id, uint8 domain)
     }
 }
 
-void initial_domain_cpus()
+void initialize_domain_cpus()
 {
     struct domain *dom = machine->all_domains;
 
@@ -278,7 +302,7 @@ void initial_domain_cpus()
     }
 }
 
-void initial_cpu_doms()
+void initialize_cpus_domain()
 {
 
     struct cpu_desc *cpu_desc = machine->all_cpus;
@@ -287,6 +311,38 @@ void initial_cpu_doms()
     {
         cpu_desc->domain = get_domain_by_id(cpu_desc->domain_id);
         cpu_desc = cpu_desc->next_cpu_desc;
+    }
+}
+
+void create_memrange(uint64 range_start, uint64 range_end, uint32 domain_id)
+{
+    struct memrange *memrange = (struct memrange *)talloc(sizeof(*memrange));
+    memrange->domain = NULL;
+    memrange->domain_id = domain_id;
+    memrange->start = (uint8 *)range_start;
+    memrange->length = (range_end - range_start);
+    memrange->next_memrange = NULL;
+
+    if (machine->all_memranges == NULL)
+    {
+        machine->all_memranges = memrange;
+    }
+    else
+    {
+        memrange->next_memrange = machine->all_memranges;
+        machine->all_memranges = memrange;
+    }
+}
+void initialize_memranges()
+{
+    struct memrange *memrange = machine->all_memranges;
+
+    while (memrange != NULL)
+    {
+        printf("DOMAIN ID: %d\n", memrange->domain_id);
+        /* code */
+        memrange->domain = get_domain_by_id(memrange->domain_id);
+        memrange = memrange->next_memrange;
     }
 }
 void extracttopology(void)
@@ -301,7 +357,7 @@ void extracttopology(void)
 
     uint8 srat_table[] = {
         83,
-        82, 65, 84, 48, 1, 0, 0, 1, 62, 66,
+        82, 65, 84, 0, 1, 0, 0, 1, 16, 66,
         79, 67, 72, 83, 32, 66, 88, 80, 67, 32,
         32, 32, 32, 1, 0, 0, 0, 66, 88, 80,
         67, 1, 0, 0, 0, 1, 0, 0, 0, 0,
@@ -309,29 +365,24 @@ void extracttopology(void)
         0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 16, 0, 1, 1, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        16, 0, 2, 1, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 16, 0, 3, 1,
+        16, 1, 2, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 1, 40, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 16, 0, 4, 1, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 16, 1,
-        5, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
+        0, 0, 0, 10, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 1, 40, 0, 0, 0,
+        0, 0, 0, 0, 0, 16, 0, 0, 0, 0,
+        0, 0, 0, 240, 31, 0, 0, 0, 0, 0,
+        0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 1, 40, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 32, 0, 0, 0,
+        0, 0, 0, 0, 32, 0, 0, 0, 0, 0,
+        0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 1, 40, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 10, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
-        0, 0, 0, 16, 0, 0, 0, 0, 0, 0,
-        0, 240, 191, 0, 0, 0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
-        0, 0, 192, 0, 0, 0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 1, 40, 1, 0, 0, 0, 0,
-        0, 0, 0, 0, 192, 1, 0, 0, 0, 0,
-        0, 0, 128, 0, 0, 0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0};
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0};
 
     struct SRAT *srat = (struct SRAT *)kalloc();
 
@@ -352,7 +403,8 @@ void extracttopology(void)
             {
                 struct SRAT_proc_lapic_struct *lapic = (struct SRAT_proc_lapic_struct *)(addr);
 
-                create_cpu_desc_by_apic_id(lapic->APIC_ID, lapic->lo_DM);
+                uint32 domain_id = (lapic->hi_DM[2] << 3 * BYTE) + (lapic->hi_DM[1] << 2 * BYTE) + (lapic->hi_DM[0] << BYTE) + (lapic->lo_DM);
+                create_cpu_desc_by_apic_id(lapic->APIC_ID, domain_id);
 
                 addr = (uint64 *)((uint8 *)addr + sizeof(struct SRAT_proc_lapic_struct));
             }
@@ -360,6 +412,10 @@ void extracttopology(void)
             {
                 struct SRAT_mem_struct *mem = (struct SRAT_mem_struct *)(addr);
                 create_domain_by_id(mem->domain);
+                uint64 range_start = (uint64)(mem->lo_base);
+                uint64 range_end = range_start + ((uint64)(mem->hi_base << 4 * BYTE) + mem->lo_length);
+                if (mem->flags)
+                    create_memrange(range_start, range_end, mem->domain);
 
                 addr = (uint64 *)((uint8 *)addr + sizeof(struct SRAT_mem_struct));
             }
@@ -369,8 +425,9 @@ void extracttopology(void)
                 addr = (uint64 *)((uint8 *)addr + sizeof(struct SRAT_proc_lapic2_struct));
             }
         }
-        initial_cpu_doms();
-        initial_domain_cpus();
+        initialize_memranges();
+        initialize_cpus_domain();
+        initialize_domain_cpus();
         describe_machine(machine);
     }
 }

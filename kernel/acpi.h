@@ -95,7 +95,8 @@ struct memrange
     uint32 domain_id;
     struct domain *domain;
     uint8 *start; /*virtual address*/
-    uint8 *end;
+    uint64 length;
+    struct memrange *next_memrange;
 };
 
 struct domain
@@ -103,7 +104,7 @@ struct domain
     uint32 domain_id;
     struct domain *next_domain;
     struct cpu_desc *cpus;
-    struct page_t *freepages;
+    struct kmem *freepages;
 };
 
 struct topology_allocator
